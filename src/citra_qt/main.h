@@ -117,8 +117,7 @@ private:
     void ConnectWidgetEvents();
     void ConnectMenuEvents();
 
-    void PreventOSSleep();
-    void AllowOSSleep();
+    void AllowOSSleep(bool enable_sleep);
 
     bool LoadROM(const QString& filename);
     void BootGame(const QString& filename);

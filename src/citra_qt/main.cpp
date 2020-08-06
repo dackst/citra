@@ -17,7 +17,12 @@
 #include <QtWidgets>
 #include <fmt/format.h>
 #ifdef __APPLE__
+#include <IOKit/pwr_mgt/IOPMLib.h>
 #include <unistd.h> // for chdir
+#elif __unix__
+#include <cstdio>
+#include <spawn.h>
+#include <sys/wait.h>
 #endif
 #ifdef _WIN32
 #include <windows.h>
@@ -866,15 +871,43 @@ void GMainWindow::OnOpenUpdater() {
     updater->LaunchUI();
 }
 
-void GMainWindow::PreventOSSleep() {
+void GMainWindow::AllowOSSleep(bool enable_sleep) {
 #ifdef _WIN32
-    SetThreadExecutionState(ES_CONTINUOUS | ES_SYSTEM_REQUIRED | ES_DISPLAY_REQUIRED);
-#endif
-}
+    if (enable_sleep)
+        SetThreadExecutionState(ES_CONTINUOUS);
+    else
+        SetThreadExecutionState(ES_CONTINUOUS | ES_SYSTEM_REQUIRED | ES_DISPLAY_REQUIRED);
 
-void GMainWindow::AllowOSSleep() {
-#ifdef _WIN32
-    SetThreadExecutionState(ES_CONTINUOUS);
+#elif defined(__APPLE__)
+    static IOPMAssertionID s_power_assertion = kIOPMNullAssertionID;
+
+    if (enable_sleep) {
+        if (s_power_assertion != kIOPMNullAssertionID) {
+            IOPMAssertionRelease(s_power_assertion);
+            s_power_assertion = kIOPMNullAssertionID;
+        }
+    } else {
+        CFStringRef reason_for_activity = CFSTR("Emulation Running");
+        if (IOPMAssertionCreateWithName(kIOPMAssertionTypePreventUserIdleDisplaySleep,
+                                        kIOPMAssertionLevelOn, reason_for_activity,
+                                        &s_power_assertion) != kIOReturnSuccess) {
+            s_power_assertion = kIOPMNullAssertionID;
+        }
+    }
+
+#elif __unix__
+    char id[11];
+    snprintf(id, sizeof(id), "0x%llx", winId());
+
+    // Call xdg-screensaver
+    char* argv[4] = {(char*)"xdg-screensaver", (char*)(enable_sleep ? "resume": "suspend"), id,
+                     nullptr};
+    pid_t pid;
+    if (!posix_spawnp(&pid, "xdg-screensaver", nullptr, nullptr, argv, environ)) {
+        int status;
+        while (waitpid(pid, &status, 0) == -1)
+            ;
+    }
 #endif
 }
 
@@ -1089,7 +1122,7 @@ void GMainWindow::ShutdownGame() {
     }
 #endif
 
-    AllowOSSleep();
+    AllowOSSleep(true);
 
     discord_rpc->Pause();
     OnStopRecordingPlayback();
@@ -1527,7 +1560,7 @@ void GMainWindow::OnStartGame() {
         movie_record_path.clear();
     }
 
-    PreventOSSleep();
+    AllowOSSleep(false);
 
     emu_thread->SetRunning(true);
     qRegisterMetaType<Core::System::ResultStatus>("Core::System::ResultStatus");
@@ -1559,7 +1592,7 @@ void GMainWindow::OnPauseGame() {
     ui.action_Stop->setEnabled(true);
     ui.action_Capture_Screenshot->setEnabled(false);
 
-    AllowOSSleep();
+    AllowOSSleep(true);
 }
 
 void GMainWindow::OnStopGame() {
