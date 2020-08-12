@@ -247,6 +247,9 @@ create_target_directory_groups(citra-qt)
 
 target_link_libraries(citra-qt PRIVATE audio_core common core input_common network video_core)
 target_link_libraries(citra-qt PRIVATE Boost::boost glad nihstro-headers Qt5::Widgets Qt5::Multimedia)
+if(UNIX AND NOT APPLE)
+    target_link_libraries(citra-qt PRIVATE Qt5::DBus)
+endif()
 target_link_libraries(citra-qt PRIVATE ${PLATFORM_LIBRARIES} Threads::Threads)
 
 target_compile_definitions(citra-qt PRIVATE

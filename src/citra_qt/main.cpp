@@ -20,9 +20,9 @@
 #include <IOKit/pwr_mgt/IOPMLib.h>
 #include <unistd.h> // for chdir
 #elif __unix__
-#include <cstdio>
-#include <spawn.h>
-#include <sys/wait.h>
+#include <QDBusConnection>
+#include <QDBusInterface>
+#include <QDBusReply>
 #endif
 #ifdef _WIN32
 #include <windows.h>
@@ -896,18 +896,27 @@ void GMainWindow::AllowOSSleep(bool enable_sleep) {
     }
 
 #elif __unix__
-    char id[11];
-    snprintf(id, sizeof(id), "0x%llx", winId());
+    static u32 dbus_cookie;
+    QDBusConnection bus = QDBusConnection::sessionBus();
 
-    // Call xdg-screensaver
-    char* argv[4] = {(char*)"xdg-screensaver", (char*)(enable_sleep ? "resume": "suspend"), id,
-                     nullptr};
-    pid_t pid;
-    if (!posix_spawnp(&pid, "xdg-screensaver", nullptr, nullptr, argv, environ)) {
-        int status;
-        while (waitpid(pid, &status, 0) == -1)
-            ;
+    if (!bus.isConnected()) {
+        return;
     }
+
+    QDBusInterface screen_saver_interface(QStringLiteral("org.freedesktop.ScreenSaver"),
+                                          QStringLiteral("/org/freedesktop/ScreenSaver"),
+                                          QStringLiteral("org.freedesktop.ScreenSaver"), bus, this);
+
+    QDBusReply<u32> reply;
+    if (enable_sleep) {
+        reply = screen_saver_interface.call(QStringLiteral("UnInhibit"), dbus_cookie);
+    } else {
+        reply = screen_saver_interface.call(QStringLiteral("Inhibit"), QStringLiteral("citra-qt"),
+                                            QStringLiteral("emulation running"));
+    }
+    if (reply.isValid())
+        dbus_cookie = reply.value();
+
 #endif
 }
 
