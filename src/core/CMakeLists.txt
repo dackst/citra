@@ -234,6 +234,7 @@ add_library(core STATIC
     hle/service/cam/cam.h
     hle/service/cam/cam_c.cpp
     hle/service/cam/cam_c.h
+    hle/service/cam/cam_params.h
     hle/service/cam/cam_q.cpp
     hle/service/cam/cam_q.h
     hle/service/cam/cam_s.cpp
@@ -486,7 +487,7 @@ if (ENABLE_WEB_SERVICE)
     endif()
 endif()
 
-if (ARCHITECTURE_x86_64)
+if (ARCHITECTURE_x86_64 OR ARCHITECTURE_ARM64)
     target_sources(core PRIVATE
         arm/dynarmic/arm_dynarmic.cpp
         arm/dynarmic/arm_dynarmic.h

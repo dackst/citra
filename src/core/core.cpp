@@ -13,7 +13,7 @@
 #include "common/logging/log.h"
 #include "common/texture.h"
 #include "core/arm/arm_interface.h"
-#ifdef ARCHITECTURE_x86_64
+#if defined(ARCHITECTURE_x86_64) || defined(ARCHITECTURE_ARM64)
 #include "core/arm/dynarmic/arm_dynarmic.h"
 #endif
 #include "core/arm/dyncom/arm_dyncom.h"
@@ -31,6 +31,8 @@
 #include "core/hle/kernel/kernel.h"
 #include "core/hle/kernel/process.h"
 #include "core/hle/kernel/thread.h"
+#include "core/hle/service/apt/applet_manager.h"
+#include "core/hle/service/apt/apt.h"
 #include "core/hle/service/fs/archive.h"
 #include "core/hle/service/gsp/gsp.h"
 #include "core/hle/service/pm/pm_app.h"
@@ -363,7 +365,7 @@ System::ResultStatus System::Init(Frontend::EmuWindow& emu_window, u32 system_mo
         *memory, *timing, [this] { PrepareReschedule(); }, system_mode, num_cores, n3ds_mode);
 
     if (Settings::values.use_cpu_jit) {
-#ifdef ARCHITECTURE_x86_64
+#if defined(ARCHITECTURE_x86_64) || defined(ARCHITECTURE_ARM64)
         for (u32 i = 0; i < num_cores; ++i) {
             cpu_cores.push_back(
                 std::make_shared<ARM_Dynarmic>(this, *memory, i, timing->GetTimer(i)));
@@ -561,9 +563,20 @@ void System::Reset() {
     // reloading.
     // TODO: Properly implement the reset
 
+    // Since the system is completely reinitialized, we'll have to store the deliver arg manually.
+    boost::optional<Service::APT::AppletManager::DeliverArg> deliver_arg;
+    if (auto apt = Service::APT::GetModule(*this)) {
+        deliver_arg = apt->GetAppletManager()->ReceiveDeliverArg();
+    }
+
     Shutdown();
     // Reload the system with the same setting
     Load(*m_emu_window, m_filepath);
+
+    // Restore the deliver arg.
+    if (auto apt = Service::APT::GetModule(*this)) {
+        apt->GetAppletManager()->SetDeliverArg(std::move(deliver_arg));
+    }
 }
 
 template <class Archive>

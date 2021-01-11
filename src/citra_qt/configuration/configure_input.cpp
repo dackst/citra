@@ -6,13 +6,17 @@
 #include <memory>
 #include <utility>
 #include <QInputDialog>
+#include <QKeyEvent>
+#include <QLabel>
 #include <QMenu>
 #include <QMessageBox>
+#include <QSlider>
 #include <QTimer>
 #include "citra_qt/configuration/config.h"
 #include "citra_qt/configuration/configure_input.h"
 #include "citra_qt/configuration/configure_motion_touch.h"
 #include "common/param_package.h"
+#include "ui_configure_input.h"
 
 const std::array<std::string, ConfigureInput::ANALOG_SUB_BUTTONS_NUM>
     ConfigureInput::analog_sub_buttons{{
@@ -164,15 +168,16 @@ ConfigureInput::ConfigureInput(QWidget* parent)
             continue;
         button_map[button_id]->setContextMenuPolicy(Qt::CustomContextMenu);
         connect(button_map[button_id], &QPushButton::clicked, [=]() {
-            HandleClick(button_map[button_id],
-                        [=](const Common::ParamPackage& params) {
-                            buttons_param[button_id] = params;
-                            // If the user closes the dialog, the changes are reverted in
-                            // `GMainWindow::OnConfigure()`
-                            ApplyConfiguration();
-                            Settings::SaveProfile(ui->profile->currentIndex());
-                        },
-                        InputCommon::Polling::DeviceType::Button);
+            HandleClick(
+                button_map[button_id],
+                [=](const Common::ParamPackage& params) {
+                    buttons_param[button_id] = params;
+                    // If the user closes the dialog, the changes are reverted in
+                    // `GMainWindow::OnConfigure()`
+                    ApplyConfiguration();
+                    Settings::SaveProfile(ui->profile->currentIndex());
+                },
+                InputCommon::Polling::DeviceType::Button);
         });
         connect(button_map[button_id], &QPushButton::customContextMenuRequested,
                 [=](const QPoint& menu_location) {
@@ -201,14 +206,15 @@ ConfigureInput::ConfigureInput(QWidget* parent)
             analog_map_buttons[analog_id][sub_button_id]->setContextMenuPolicy(
                 Qt::CustomContextMenu);
             connect(analog_map_buttons[analog_id][sub_button_id], &QPushButton::clicked, [=]() {
-                HandleClick(analog_map_buttons[analog_id][sub_button_id],
-                            [=](const Common::ParamPackage& params) {
-                                SetAnalogButton(params, analogs_param[analog_id],
-                                                analog_sub_buttons[sub_button_id]);
-                                ApplyConfiguration();
-                                Settings::SaveProfile(ui->profile->currentIndex());
-                            },
-                            InputCommon::Polling::DeviceType::Button);
+                HandleClick(
+                    analog_map_buttons[analog_id][sub_button_id],
+                    [=](const Common::ParamPackage& params) {
+                        SetAnalogButton(params, analogs_param[analog_id],
+                                        analog_sub_buttons[sub_button_id]);
+                        ApplyConfiguration();
+                        Settings::SaveProfile(ui->profile->currentIndex());
+                    },
+                    InputCommon::Polling::DeviceType::Button);
             });
             connect(analog_map_buttons[analog_id][sub_button_id],
                     &QPushButton::customContextMenuRequested, [=](const QPoint& menu_location) {
@@ -239,13 +245,14 @@ ConfigureInput::ConfigureInput(QWidget* parent)
                     tr("After pressing OK, first move your joystick horizontally, "
                        "and then vertically."),
                     QMessageBox::Ok | QMessageBox::Cancel) == QMessageBox::Ok) {
-                HandleClick(analog_map_stick[analog_id],
-                            [=](const Common::ParamPackage& params) {
-                                analogs_param[analog_id] = params;
-                                ApplyConfiguration();
-                                Settings::SaveProfile(ui->profile->currentIndex());
-                            },
-                            InputCommon::Polling::DeviceType::Analog);
+                HandleClick(
+                    analog_map_stick[analog_id],
+                    [=](const Common::ParamPackage& params) {
+                        analogs_param[analog_id] = params;
+                        ApplyConfiguration();
+                        Settings::SaveProfile(ui->profile->currentIndex());
+                    },
+                    InputCommon::Polling::DeviceType::Analog);
             }
         });
         connect(analog_map_deadzone_and_modifier_slider[analog_id], &QSlider::valueChanged, [=] {
@@ -269,6 +276,7 @@ ConfigureInput::ConfigureInput(QWidget* parent)
 
     ui->buttonDelete->setEnabled(ui->profile->count() > 1);
 
+    connect(ui->buttonAutoMap, &QPushButton::clicked, this, &ConfigureInput::AutoMap);
     connect(ui->buttonClearAll, &QPushButton::clicked, this, &ConfigureInput::ClearAll);
     connect(ui->buttonRestoreDefaults, &QPushButton::clicked, this,
             &ConfigureInput::RestoreDefaults);
@@ -431,6 +439,52 @@ void ConfigureInput::UpdateButtonLabels() {
     }
 
     EmitInputKeysChanged();
+}
+
+void ConfigureInput::MapFromButton(const Common::ParamPackage& params) {
+    Common::ParamPackage aux_param;
+    bool mapped = false;
+    for (int button_id = 0; button_id < Settings::NativeButton::NumButtons; button_id++) {
+        aux_param = InputCommon::GetSDLControllerButtonBindByGUID(params.Get("guid", "0"),
+                                                                  params.Get("port", 0), button_id);
+        if (aux_param.Has("engine")) {
+            buttons_param[button_id] = aux_param;
+            mapped = true;
+        }
+    }
+    for (int analog_id = 0; analog_id < Settings::NativeAnalog::NumAnalogs; analog_id++) {
+        aux_param = InputCommon::GetSDLControllerAnalogBindByGUID(params.Get("guid", "0"),
+                                                                  params.Get("port", 0), analog_id);
+        if (aux_param.Has("engine")) {
+            analogs_param[analog_id] = aux_param;
+            mapped = true;
+        }
+    }
+    if (!mapped) {
+        QMessageBox::warning(
+            this, tr("Warning"),
+            tr("Auto mapping failed. Your controller may not have a corresponding mapping"));
+    }
+}
+
+void ConfigureInput::AutoMap() {
+    if (QMessageBox::information(this, tr("Information"),
+                                 tr("After pressing OK, press any button on your joystick"),
+                                 QMessageBox::Ok | QMessageBox::Cancel) == QMessageBox::Cancel) {
+        return;
+    }
+    input_setter = [=](const Common::ParamPackage& params) {
+        MapFromButton(params);
+        ApplyConfiguration();
+        Settings::SaveProfile(ui->profile->currentIndex());
+    };
+    device_pollers = InputCommon::Polling::GetPollers(InputCommon::Polling::DeviceType::Button);
+    want_keyboard_keys = false;
+    for (auto& poller : device_pollers) {
+        poller->Start();
+    }
+    timeout_timer->start(5000); // Cancel after 5 seconds
+    poll_timer->start(200);     // Check for new inputs every 200ms
 }
 
 void ConfigureInput::HandleClick(QPushButton* button,
